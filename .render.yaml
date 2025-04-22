@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: xano-docs-rag
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn -k uvicorn.workers.UvicornWorker main:app
+    autoDeploy: true
+
