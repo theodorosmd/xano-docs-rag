@@ -6,4 +6,12 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn -k uvicorn.workers.UvicornWorker main:app
     autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.9.0
+    healthCheckPath: /docs
+    disk:
+      name: chroma-data
+      mountPath: /opt/render/project/src/chroma_db
+      sizeGB: 1
 
