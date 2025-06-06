@@ -1,13 +1,12 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_chroma import Chroma
-from langchain_openai import OpenAIEmbeddings
-from langchain_openai import ChatOpenAI
 from langchain.chains import RetrievalQA
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.document_loaders import TextLoader
-from dotenv import load_dotenv
+from langchain.document_loaders import TextLoader
 import os
+from dotenv import load_dotenv
 
 # Charger les variables d'environnement
 load_dotenv()
@@ -15,53 +14,79 @@ load_dotenv()
 # Créer l'app FastAPI
 app = FastAPI()
 
-# Initialize database
-def init_db():
-    embeddings = OpenAIEmbeddings()
-    db = Chroma(persist_directory="./chroma_db", embedding_function=embeddings)
-    
-    # Check if database is empty
-    if db._collection.count() == 0:
-        print("Initializing database with Xano documentation...")
-        # Load the documentation
-        loader = TextLoader("xano_docs.md")
-        documents = loader.load()
-        
-        # Split the text
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=200,
-            length_function=len,
-        )
-        texts = text_splitter.split_documents(documents)
-        
-        # Add to database
-        db.add_documents(texts)
-        db.persist()
-        print("Database initialized!")
-    else:
-        print("Database already contains data.")
-    
-    return db
-
-# Initialize database on startup
-db = init_db()
-
 # Schéma de requête
 class Question(BaseModel):
     query: str
 
+def init_db():
+    """Initialize the Chroma database with documentation if it's empty."""
+    # Initialize embeddings
+    embeddings = OpenAIEmbeddings()
+    
+    # Create or load Chroma database
+    db = Chroma(persist_directory="./chroma_db", embedding_function=embeddings)
+    
+    # Check if database is empty
+    if len(db.get()['ids']) == 0:
+        print("Initializing database with documentation...")
+        
+        # Load Xano documentation
+        xano_loader = TextLoader("xano_docs.md")
+        xano_docs = xano_loader.load()
+        
+        # Load Weweb documentation
+        weweb_docs = []
+        for file in os.listdir():
+            if file.endswith('.md'):
+                loader = TextLoader(file)
+                weweb_docs.extend(loader.load())
+        
+        # Load Bubble documentation
+        bubble_docs = []
+        bubble_dir = "bubble_docs"
+        if os.path.exists(bubble_dir):
+            for file in os.listdir(bubble_dir):
+                if file.endswith('.md'):
+                    loader = TextLoader(os.path.join(bubble_dir, file))
+                    bubble_docs.extend(loader.load())
+        
+        # Combine all documents
+        all_docs = xano_docs + weweb_docs + bubble_docs
+        
+        # Split documents into chunks
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000,
+            chunk_overlap=200
+        )
+        chunks = text_splitter.split_documents(all_docs)
+        
+        # Add documents to the database
+        db.add_documents(chunks)
+        print(f"Added {len(chunks)} document chunks to the database")
+    else:
+        print("Database already contains data.")
+
+# Initialize database on startup
+init_db()
+
 # Endpoint pour traiter une question
 @app.post("/ask")
 async def ask_question(data: Question):
-    embeddings = OpenAIEmbeddings()
-    retriever = db.as_retriever()
-    llm = ChatOpenAI(model_name="gpt-4",
-    temperature=0,
-    max_tokens=1024,
-    top_p=1,
-    streaming=True)
-    qa = RetrievalQA.from_chain_type(llm=llm, retriever=retriever)
-    
-    result = qa.invoke({"query": data.query})
-    return {"response": result["result"]}
+    try:
+        # Initialize embeddings and database
+        embeddings = OpenAIEmbeddings()
+        db = Chroma(persist_directory="./chroma_db", embedding_function=embeddings)
+        
+        # Create QA chain
+        qa = RetrievalQA.from_chain_type(
+            llm=ChatOpenAI(model_name="gpt-4"),
+            chain_type="stuff",
+            retriever=db.as_retriever()
+        )
+        
+        # Get answer
+        result = qa.invoke({"query": data.query})
+        
+        return {"answer": result["result"]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
