@@ -37,8 +37,8 @@ processing_progress.json
 chroma_db/
 
 # Documentation
-docs/
-GitBook-Downloader-To-HTML-Converter/
+# docs/
+# GitBook-Downloader-To-HTML-Converter/
 
 # IDE
 .idea/
