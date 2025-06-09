@@ -121,6 +121,7 @@ async def ask_question(data: Question):
         qa = create_retrieval_chain(retriever, document_chain)
         
         result = qa.invoke({"query": data.query})
+        logger.info(f"Result from QA invoke: {result}")
         processing_time = time.time() - start_time
         
         logger.info(f"Question processed successfully in {processing_time:.2f}s")
@@ -131,8 +132,8 @@ async def ask_question(data: Question):
             timestamp=datetime.utcnow().isoformat()
         )
     except Exception as e:
-        logger.error(f"Error processing question: {str(e)}", exc_info=True)
+        logger.error(f"Error processing question: {str(e)} - Type: {type(e).__name__} - Args: {e.args}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail=f"Error processing question: {str(e)}"
+            detail=f"Error processing question: {str(e)} - Please check logs for more details."
         )
