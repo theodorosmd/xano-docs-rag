@@ -2,16 +2,19 @@ services:
   - type: web
     name: xano-docs-rag
     env: python
-    plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn -k uvicorn.workers.UvicornWorker main:app
-    autoDeploy: true
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.9.0
-    healthCheckPath: /docs
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: API_KEY
+        sync: false
+      - key: PORT
+        value: 10000
+    healthCheckPath: /health
+    autoDeploy: true
     disk:
       name: chroma-data
-      mountPath: /opt/render/project/src/chroma_db
-      sizeGB: 1
+      mountPath: /opt/render/chroma_db
+      sizeGB: 10
 

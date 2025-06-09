@@ -1,92 +1,138 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+from fastapi import FastAPI, HTTPException, Request, Depends
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 from langchain_chroma import Chroma
-from langchain.chains import RetrievalQA
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.document_loaders import TextLoader
-import os
+from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+from langchain.chains import create_retrieval_chain
+from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain_core.prompts import ChatPromptTemplate
 from dotenv import load_dotenv
+import os
+import logging
+from typing import Optional
+import time
+from datetime import datetime
+from middleware import RateLimitMiddleware, verify_api_key
 
-# Charger les variables d'environnement
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('api.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# Load environment variables
 load_dotenv()
 
-# Créer l'app FastAPI
-app = FastAPI()
+# Create FastAPI app
+app = FastAPI(
+    title="Documentation RAG API",
+    description="API for querying documentation using RAG",
+    version="1.0.0"
+)
 
-# Schéma de requête
+# Add middleware
+app.add_middleware(RateLimitMiddleware)
+
+# Request schema with validation
 class Question(BaseModel):
-    query: str
+    query: str = Field(..., min_length=1, max_length=1000, description="The question to ask about the documentation")
 
-def init_db():
-    """Initialize the Chroma database with documentation if it's empty."""
-    # Initialize embeddings
-    embeddings = OpenAIEmbeddings()
-    
-    # Create or load Chroma database
-    db = Chroma(persist_directory="./chroma_db", embedding_function=embeddings)
-    
-    # Check if database is empty
-    if len(db.get()['ids']) == 0:
-        print("Initializing database with documentation...")
-        
-        # Load Xano documentation
-        xano_loader = TextLoader("xano_docs.md")
-        xano_docs = xano_loader.load()
-        
-        # Load Weweb documentation
-        weweb_docs = []
-        for file in os.listdir():
-            if file.endswith('.md'):
-                loader = TextLoader(file)
-                weweb_docs.extend(loader.load())
-        
-        # Load Bubble documentation
-        bubble_docs = []
-        bubble_dir = "bubble_docs"
-        if os.path.exists(bubble_dir):
-            for file in os.listdir(bubble_dir):
-                if file.endswith('.md'):
-                    loader = TextLoader(os.path.join(bubble_dir, file))
-                    bubble_docs.extend(loader.load())
-        
-        # Combine all documents
-        all_docs = xano_docs + weweb_docs + bubble_docs
-        
-        # Split documents into chunks
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=200
-        )
-        chunks = text_splitter.split_documents(all_docs)
-        
-        # Add documents to the database
-        db.add_documents(chunks)
-        print(f"Added {len(chunks)} document chunks to the database")
-    else:
-        print("Database already contains data.")
+# Response schemas
+class ErrorResponse(BaseModel):
+    error: str
+    detail: Optional[str] = None
+    timestamp: str
 
-# Initialize database on startup
-init_db()
+class SuccessResponse(BaseModel):
+    response: str
+    processing_time: float
+    timestamp: str
 
-# Endpoint pour traiter une question
-@app.post("/ask")
-async def ask_question(data: Question):
+# Middleware for request logging
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start_time = time.time()
+    response = await call_next(request)
+    process_time = time.time() - start_time
+    logger.info(f"Request: {request.method} {request.url.path} - Status: {response.status_code} - Time: {process_time:.2f}s")
+    return response
+
+# Error handler
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Global error handler caught: {str(exc)}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content=ErrorResponse(
+            error="Internal Server Error",
+            detail=str(exc),
+            timestamp=datetime.utcnow().isoformat()
+        ).dict()
+    )
+
+# Health check endpoint
+@app.get("/health")
+async def health_check():
     try:
-        # Initialize embeddings and database
+        # Test database connection
         embeddings = OpenAIEmbeddings()
         db = Chroma(persist_directory="./chroma_db", embedding_function=embeddings)
+        return {"status": "healthy", "database": "connected"}
+    except Exception as e:
+        logger.error(f"Health check failed: {str(e)}")
+        raise HTTPException(status_code=503, detail="Service unhealthy")
+
+# Question endpoint
+@app.post("/ask", response_model=SuccessResponse, dependencies=[Depends(verify_api_key)])
+async def ask_question(data: Question):
+    start_time = time.time()
+    try:
+        logger.info(f"Processing question: {data.query[:100]}...")
         
-        # Create QA chain
-        qa = RetrievalQA.from_chain_type(
-            llm=ChatOpenAI(model_name="gpt-4"),
-            chain_type="stuff",
-            retriever=db.as_retriever()
+        embeddings = OpenAIEmbeddings()
+        db = Chroma(persist_directory="./chroma_db", embedding_function=embeddings)
+        retriever = db.as_retriever()
+        llm = ChatOpenAI(
+            model_name="gpt-4",
+            temperature=0,
+            max_tokens=1024,
+            top_p=1,
+            streaming=True
         )
         
-        # Get answer
-        result = qa.invoke({"query": data.query})
+        # Create the prompt template
+        prompt = ChatPromptTemplate.from_template("""Answer the following question based on the provided context:
         
-        return {"answer": result["result"]}
+        Context: {context}
+        
+        Question: {query}
+        
+        Answer:""")
+        
+        # Create the document chain
+        document_chain = create_stuff_documents_chain(llm, prompt)
+        
+        # Create the retrieval chain
+        qa = create_retrieval_chain(retriever, document_chain)
+        
+        result = qa.invoke({"query": data.query})
+        processing_time = time.time() - start_time
+        
+        logger.info(f"Question processed successfully in {processing_time:.2f}s")
+        
+        return SuccessResponse(
+            response=result["answer"],
+            processing_time=processing_time,
+            timestamp=datetime.utcnow().isoformat()
+        )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error processing question: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error processing question: {str(e)}"
+        )
