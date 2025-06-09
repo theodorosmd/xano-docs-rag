@@ -110,7 +110,7 @@ async def ask_question(data: Question):
         
         Context: {context}
         
-        Question: {query}
+        Question: {input}
         
         Answer:""")
         
@@ -120,7 +120,7 @@ async def ask_question(data: Question):
         # Create the retrieval chain
         qa = create_retrieval_chain(retriever, document_chain)
         
-        result = qa.invoke({"query": data.query})
+        result = qa.invoke({"input": data.query})
         logger.info(f"Result from QA invoke: {result}")
         processing_time = time.time() - start_time
         
