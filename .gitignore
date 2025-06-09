@@ -27,6 +27,7 @@ wheels/
 # Logs
 *.log
 api.log
+processing_progress.json
 
 # Database
 chroma_db/
@@ -38,6 +39,7 @@ GitBook-Downloader-To-HTML-Converter/
 # IDE
 .vscode/
 .idea/
+langchain/
 *.swp
 *.swo
 
