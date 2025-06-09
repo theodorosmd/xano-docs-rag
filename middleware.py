@@ -48,7 +48,9 @@ API_KEY_NAME = "X-API-Key"
 api_key_header = APIKeyHeader(name=API_KEY_NAME)
 
 async def verify_api_key(api_key: str = api_key_header):
+    logger.info(f"Received API key: {api_key}")
     if not api_key:
+        logger.warning("No API key provided")
         raise HTTPException(
             status_code=401,
             detail="API key is missing"
@@ -56,6 +58,7 @@ async def verify_api_key(api_key: str = api_key_header):
     
     # Get API key from environment variable
     valid_api_key = os.getenv("API_KEY")
+    logger.info(f"Valid API key from env: {valid_api_key}")
     if not valid_api_key:
         logger.warning("API_KEY environment variable not set")
         raise HTTPException(

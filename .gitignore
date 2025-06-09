@@ -7,7 +7,6 @@ __pycache__/
 *$py.class
 *.so
 .Python
-env/
 build/
 develop-eggs/
 dist/
@@ -24,6 +23,11 @@ wheels/
 .installed.cfg
 *.egg
 
+# Virtual Environment
+venv/
+env/
+ENV/
+
 # Logs
 *.log
 api.log
@@ -37,8 +41,8 @@ docs/
 GitBook-Downloader-To-HTML-Converter/
 
 # IDE
-.vscode/
 .idea/
+.vscode/
 langchain/
 *.swp
 *.swo
