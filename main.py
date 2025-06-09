@@ -81,7 +81,7 @@ async def health_check():
     try:
         # Test database connection
         embeddings = OpenAIEmbeddings()
-        db = Chroma(persist_directory="./chroma_db", embedding_function=embeddings)
+        db = Chroma(persist_directory="/opt/render/chroma_db", embedding_function=embeddings)
         return {"status": "healthy", "database": "connected"}
     except Exception as e:
         logger.error(f"Health check failed: {str(e)}")
@@ -95,7 +95,7 @@ async def ask_question(data: Question):
         logger.info(f"Processing question: {data.query[:100]}...")
         
         embeddings = OpenAIEmbeddings()
-        db = Chroma(persist_directory="./chroma_db", embedding_function=embeddings)
+        db = Chroma(persist_directory="/opt/render/chroma_db", embedding_function=embeddings)
         retriever = db.as_retriever()
         llm = ChatOpenAI(
             model_name="gpt-4",
