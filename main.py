@@ -12,6 +12,7 @@ import logging
 from typing import Optional
 import time
 from datetime import datetime
+# Assurez-vous que l'import de verify_api_key est correct
 from middleware import RateLimitMiddleware, verify_api_key
 
 # Configure logging
@@ -19,7 +20,8 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('api.log'),
+        # Gardez le FileHandler pour le développement local si vous le souhaitez, mais il peut ne pas persister sur Render
+        # logging.FileHandler('api.log'), 
         logging.StreamHandler()
     ]
 )
@@ -35,6 +37,7 @@ app = FastAPI(
 
 app.add_middleware(RateLimitMiddleware)
 
+# --- Schémas de données (Pydantic Models) ---
 class Question(BaseModel):
     query: str = Field(..., min_length=1, max_length=1000)
 
@@ -48,6 +51,7 @@ class SuccessResponse(BaseModel):
     processing_time: float
     timestamp: str
 
+# --- Middlewares et Handlers ---
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     start_time = time.time()
@@ -68,11 +72,23 @@ async def global_exception_handler(request: Request, exc: Exception):
         ).dict()
     )
 
+# --- Endpoints de l'API ---
+
+# NOUVEL ENDPOINT DE TEST
+@app.get("/version")
+async def get_version():
+    """
+    Retourne une version statique pour vérifier si le dernier déploiement est en ligne.
+    """
+    return {"version": "1.1", "description": "API avec le middleware de sécurité corrigé."}
+
+
 @app.get("/health")
 async def health_check():
     try:
         embeddings = OpenAIEmbeddings()
-        db = Chroma(persist_directory="./chroma_db", embedding_function=embeddings)
+        # Le chemin de la base de données doit être adapté à l'environnement de Render
+        db = Chroma(persist_directory="/opt/render/project/src/chroma_db", embedding_function=embeddings)
         return {"status": "healthy", "database": "connected"}
     except Exception as e:
         logger.error(f"Health check failed: {e}")
@@ -85,28 +101,29 @@ async def ask_question(data: Question):
         logger.info(f"Received question: {data.query[:80]}...")
 
         embeddings = OpenAIEmbeddings()
-        db = Chroma(persist_directory="./chroma_db", embedding_function=embeddings)
+        db = Chroma(persist_directory="/opt/render/project/src/chroma_db", embedding_function=embeddings)
         retriever = db.as_retriever()
         llm = ChatOpenAI(
-            model_name="gpt-4",
+            model_name="gpt-4", # Fixed model name
             temperature=0,
-            max_tokens=1024,
-            top_p=1
+            max_tokens=1024
         )
 
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", "You are an expert answering questions about a technical documentation."),
-            ("human", "Context:\n{context}\n\nQuestion: {input}")
-        ])
+        prompt = ChatPromptTemplate.from_template(
+            "Answer the following question based only on the provided context.\n\n"
+            "Context: {context}\n\n"
+            "Question: {input}\n\n"
+            "Answer:"
+        )
 
         document_chain = create_stuff_documents_chain(llm, prompt)
         qa = create_retrieval_chain(retriever, document_chain)
 
         result = qa.invoke({"input": data.query})
-        answer = result["answer"]
+        answer = result.get("answer", "No answer found in the context.")
         duration = time.time() - start_time
 
-        logger.info(f"Answer: {answer[:200]}... in {duration:.2f}s")
+        logger.info(f"Answer generated in {duration:.2f}s")
         return SuccessResponse(
             response=answer,
             processing_time=duration,
