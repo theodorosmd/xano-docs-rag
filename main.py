@@ -9,10 +9,9 @@ from langchain_core.prompts import ChatPromptTemplate
 from dotenv import load_dotenv
 import os
 import logging
-from typing import Optional
+from typing import Optional, List, Dict, Any
 import time
 from datetime import datetime
-# Assurez-vous que l'import de verify_api_key est correct
 from middleware import RateLimitMiddleware, verify_api_key
 
 # Configure logging
@@ -20,8 +19,6 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        # Gardez le FileHandler pour le développement local si vous le souhaitez, mais il peut ne pas persister sur Render
-        # logging.FileHandler('api.log'), 
         logging.StreamHandler()
     ]
 )
@@ -51,6 +48,16 @@ class SuccessResponse(BaseModel):
     processing_time: float
     timestamp: str
 
+class DebugDocument(BaseModel):
+    content: str
+    metadata: Dict[str, Any]
+
+class DebugResponse(BaseModel):
+    query: str
+    retrieved_documents_count: int
+    retrieved_documents: List[DebugDocument]
+
+
 # --- Middlewares et Handlers ---
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
@@ -74,25 +81,57 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 # --- Endpoints de l'API ---
 
-# NOUVEL ENDPOINT DE TEST
 @app.get("/version")
 async def get_version():
-    """
-    Retourne une version statique pour vérifier si le dernier déploiement est en ligne.
-    """
-    return {"version": "1.1", "description": "API avec le middleware de sécurité corrigé."}
+    return {"version": "1.2", "description": "API with retriever debugging endpoint."}
 
 
 @app.get("/health")
 async def health_check():
     try:
         embeddings = OpenAIEmbeddings()
-        # Le chemin de la base de données doit être adapté à l'environnement de Render
         db = Chroma(persist_directory="/opt/render/project/src/chroma_db", embedding_function=embeddings)
         return {"status": "healthy", "database": "connected"}
     except Exception as e:
         logger.error(f"Health check failed: {e}")
         raise HTTPException(status_code=503, detail="Service unhealthy")
+
+
+# NOUVEL ENDPOINT DE DÉBOGAGE
+@app.post("/debug-retriever", response_model=DebugResponse, dependencies=[Depends(verify_api_key)])
+async def debug_retriever(data: Question):
+    """
+    Cet endpoint teste uniquement la partie "Retrieval".
+    Il retourne les documents trouvés dans ChromaDB pour une question donnée, sans appeler l'IA.
+    """
+    try:
+        logger.info(f"DEBUG: Testing retriever for question: {data.query}")
+        
+        embeddings = OpenAIEmbeddings()
+        db = Chroma(
+            persist_directory="/opt/render/project/src/chroma_db", 
+            embedding_function=embeddings
+        )
+        retriever = db.as_retriever()
+        
+        # Étape clé : on récupère les documents sans appeler le LLM
+        retrieved_docs = retriever.invoke(data.query)
+        
+        logger.info(f"DEBUG: Found {len(retrieved_docs)} documents.")
+        
+        # On retourne le contenu des documents trouvés
+        return DebugResponse(
+            query=data.query,
+            retrieved_documents_count=len(retrieved_docs),
+            retrieved_documents=[
+                DebugDocument(content=doc.page_content, metadata=doc.metadata) 
+                for doc in retrieved_docs
+            ]
+        )
+    except Exception as e:
+        logger.error(f"DEBUG: Error in retriever test: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/ask", response_model=SuccessResponse, dependencies=[Depends(verify_api_key)])
 async def ask_question(data: Question):
@@ -104,7 +143,7 @@ async def ask_question(data: Question):
         db = Chroma(persist_directory="/opt/render/project/src/chroma_db", embedding_function=embeddings)
         retriever = db.as_retriever()
         llm = ChatOpenAI(
-            model_name="gpt-4o", # Utilisation de gpt-4o pour plus de rapidité
+            model_name="gpt-4o",
             temperature=0,
             max_tokens=1024
         )
