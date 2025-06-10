@@ -104,7 +104,7 @@ async def ask_question(data: Question):
         db = Chroma(persist_directory="/opt/render/project/src/chroma_db", embedding_function=embeddings)
         retriever = db.as_retriever()
         llm = ChatOpenAI(
-            model_name="gpt-4", # Fixed model name
+            model_name="gpt-4o", # Utilisation de gpt-4o pour plus de rapidité
             temperature=0,
             max_tokens=1024
         )
