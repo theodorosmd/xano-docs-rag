@@ -34,7 +34,6 @@ api.log
 processing_progress.json
 
 # Database
-chroma_db/
 
 # Documentation
 # docs/
